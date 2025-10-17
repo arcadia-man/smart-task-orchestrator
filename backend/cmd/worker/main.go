@@ -26,7 +26,7 @@ func main() {
 
 	// Initialize services
 	jobService := jobs.NewService(mongoDB.Database)
-	consumer := kafka.NewConsumer(cfg.KafkaBroker, "jobs.execute", "worker-group-1")
+	consumer := kafka.NewConsumer(cfg.KafkaBroker, "jobs.execute", "worker-group-v2")
 	producer := kafka.NewProducer(cfg.KafkaBroker)
 	defer consumer.Close()
 	defer producer.Close()
@@ -41,6 +41,14 @@ func main() {
 		// Read message from Kafka
 		msg, err := consumer.ReadMessage(ctx)
 		if err != nil {
+			// Handle timeout errors differently (they're expected)
+			if err.Error() == "timeout waiting for message" ||
+				err.Error() == "failed to read message: context deadline exceeded" {
+				log.Printf("⏰ No messages available, waiting...")
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
 			errorCount++
 			log.Printf("Error reading message (%d/%d): %v", errorCount, maxErrors, err)
 

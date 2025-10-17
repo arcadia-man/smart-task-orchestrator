@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -42,6 +43,7 @@ func (p *Producer) PublishJob(ctx context.Context, topic string, jobID string, p
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 
+	log.Printf("📤 Published job %s to topic %s", jobID, topic)
 	return nil
 }
 

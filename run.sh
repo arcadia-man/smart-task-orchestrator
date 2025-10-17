@@ -96,15 +96,25 @@ start_services() {
     fi
     print_success "MongoDB is running"
     
-    # Check if ports are available
+    # Check if ports are available and clean them if needed
     if check_port 8080; then
-        print_error "Port 8080 is already in use. Please stop the service using that port."
-        exit 1
+        print_warning "Port 8080 is in use, attempting to free it..."
+        lsof -ti:8080 | xargs kill -9 > /dev/null 2>&1 || true
+        sleep 1
+        if check_port 8080; then
+            print_error "Could not free port 8080. Please manually stop the service."
+            exit 1
+        fi
     fi
     
     if check_port 3000; then
-        print_error "Port 3000 is already in use. Please stop the service using that port."
-        exit 1
+        print_warning "Port 3000 is in use, attempting to free it..."
+        lsof -ti:3000 | xargs kill -9 > /dev/null 2>&1 || true
+        sleep 1
+        if check_port 3000; then
+            print_error "Could not free port 3000. Please manually stop the service."
+            exit 1
+        fi
     fi
     
     # Start backend services
@@ -176,31 +186,40 @@ start_services() {
 stop_services() {
     print_status "Stopping Smart Task Orchestrator..."
     
-    # Stop processes using PID files
-    for service in api worker scheduler frontend; do
-        if [ -f "pids/$service.pid" ]; then
-            PID=$(cat "pids/$service.pid")
-            if kill -0 $PID 2>/dev/null; then
-                print_status "Stopping $service (PID: $PID)..."
-                kill $PID
-                rm -f "pids/$service.pid"
-            else
-                print_warning "$service was not running"
-                rm -f "pids/$service.pid"
-            fi
-        fi
-    done
+    # Kill processes by pattern (more reliable than PID files for go run)
+    print_status "Stopping API server..."
+    pkill -f "go run cmd/api/main.go" > /dev/null 2>&1 || true
+    
+    print_status "Stopping worker..."
+    pkill -f "go run cmd/worker/main.go" > /dev/null 2>&1 || true
+    
+    print_status "Stopping scheduler..."
+    pkill -f "go run cmd/scheduler/main.go" > /dev/null 2>&1 || true
+    
+    print_status "Stopping frontend..."
+    pkill -f "npm run dev" > /dev/null 2>&1 || true
+    
+    # Also kill by port to be extra sure
+    if lsof -ti:8080 > /dev/null 2>&1; then
+        print_status "Killing process on port 8080..."
+        lsof -ti:8080 | xargs kill -9 > /dev/null 2>&1 || true
+    fi
+    
+    if lsof -ti:3000 > /dev/null 2>&1; then
+        print_status "Killing process on port 3000..."
+        lsof -ti:3000 | xargs kill -9 > /dev/null 2>&1 || true
+    fi
     
     # Stop MongoDB container
     print_status "Stopping MongoDB..."
     docker stop orchestrator-mongo > /dev/null 2>&1 || true
     docker rm orchestrator-mongo > /dev/null 2>&1 || true
     
-    # Kill any remaining processes
-    pkill -f "go run cmd/api/main.go" > /dev/null 2>&1 || true
-    pkill -f "go run cmd/worker/main.go" > /dev/null 2>&1 || true
-    pkill -f "go run cmd/scheduler/main.go" > /dev/null 2>&1 || true
-    pkill -f "npm run dev" > /dev/null 2>&1 || true
+    # Clean up PID files
+    rm -f pids/*.pid > /dev/null 2>&1 || true
+    
+    # Wait a moment for processes to terminate
+    sleep 2
     
     print_success "All services stopped"
 }
