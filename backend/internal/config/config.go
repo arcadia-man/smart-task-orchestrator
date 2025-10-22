@@ -1,29 +1,37 @@
 package config
 
 import (
-	"log"
 	"os"
-
-	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	MongoURI    string
+	// Database
+	MongoURI string
+	DBName   string
+
+	// Cache & Queue
+	RedisURL    string
 	KafkaBroker string
-	DBName      string
-	Port        string
+
+	// Authentication
+	JWTSecret string
+
+	// Server
+	Port string
+
+	// Docker
+	DockerHost string
 }
 
 func Load() *Config {
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, using environment variables")
-	}
-
 	return &Config{
 		MongoURI:    getEnv("MONGO_URI", "mongodb://localhost:27017/orchestrator"),
-		KafkaBroker: getEnv("KAFKA_BROKER", "localhost:9092"),
 		DBName:      getEnv("DB_NAME", "orchestrator"),
+		RedisURL:    getEnv("REDIS_URL", "redis://localhost:6379"),
+		KafkaBroker: getEnv("KAFKA_BROKER", "localhost:9092"),
+		JWTSecret:   getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
 		Port:        getEnv("PORT", "8080"),
+		DockerHost:  getEnv("DOCKER_HOST", "unix:///var/run/docker.sock"),
 	}
 }
 
