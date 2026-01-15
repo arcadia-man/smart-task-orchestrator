@@ -35,26 +35,9 @@ export const useAuth = () => {
     }, [token]);
 
     const login = async (username: string, password: string) => {
-        console.log('🔐 AUTH: Starting login process');
-        console.log('🔐 AUTH: Username:', username);
-        
         try {
-            console.log('🔐 AUTH: Making API call to /api/auth/login');
             const response = await authAPI.login(username, password);
-            console.log('🔐 AUTH: API response:', response.data);
-            
-            // Handle different response formats
-            if (response.data.message) {
-                console.log('🔐 AUTH: Received placeholder response from backend');
-                // Placeholder response from backend
-                return { 
-                    success: false, 
-                    error: 'Backend API not fully implemented yet. Please implement the login handler.' 
-                };
-            }
-            
             const { access_token, user: userData, must_change_password } = response.data;
-            console.log('🔐 AUTH: Extracted data - token:', !!access_token, 'user:', userData, 'must_change_password:', must_change_password);
             
             localStorage.setItem('token', access_token);
             setToken(access_token);
@@ -65,13 +48,10 @@ export const useAuth = () => {
                 isInitialLogin: must_change_password || userData?.isInitialLogin || false
             };
             
-            console.log('🔐 AUTH: Final user object:', userWithInitialLogin);
             setUser(userWithInitialLogin);
             
             return { success: true, user: userWithInitialLogin };
         } catch (error: any) {
-            console.log('🔐 AUTH: Login error:', error);
-            console.log('🔐 AUTH: Error response:', error.response?.data);
             return { 
                 success: false, 
                 error: error.response?.data?.error || 'Login failed' 
@@ -83,6 +63,7 @@ export const useAuth = () => {
         localStorage.removeItem('token');
         setToken(null);
         setUser(null);
+        window.location.href = '/login';
     };
 
     const isAuthenticated = !!token && !!user;

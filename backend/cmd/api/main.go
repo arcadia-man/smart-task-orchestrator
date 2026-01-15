@@ -1,291 +1,205 @@
 package main
 
 import (
-    "context"
-    "log"
-    "net/http"
-    "os"
-    "os/signal"
-    "syscall"
-    "time"
+	"context"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
-    "github.com/gin-gonic/gin"
-    "go.mongodb.org/mongo-driver/mongo"
+	"github.com/gin-gonic/gin"
 
-    "smart-task-orchestrator/internal/auth"
-    "smart-task-orchestrator/internal/config"
-    "smart-task-orchestrator/internal/db"
-    "smart-task-orchestrator/pkg/kafka"
-    "smart-task-orchestrator/pkg/redis"
+	"smart-task-orchestrator/internal/auth"
+	"smart-task-orchestrator/internal/config"
+	"smart-task-orchestrator/internal/db"
+	"smart-task-orchestrator/internal/handlers"
+	"smart-task-orchestrator/pkg/kafka"
+	"smart-task-orchestrator/pkg/redis"
 )
 
 func main() {
-    // Load configuration
-    cfg := config.Load()
+	// Load configuration
+	cfg := config.Load()
 
-    // Initialize database
-    mongoDB, err := db.NewMongoDB(cfg.MongoURI, cfg.DBName)
-    if err != nil {
-        log.Fatalf("Failed to connect to MongoDB: %v", err)
-    }
-    defer mongoDB.Close()
+	// Initialize database
+	mongoDB, err := db.NewMongoDB(cfg.MongoURI, cfg.DBName)
+	if err != nil {
+		log.Fatalf("Failed to connect to MongoDB: %v", err)
+	}
+	defer mongoDB.Close()
 
-    // Initialize Redis
-    redisClient, err := redis.NewClient(cfg.RedisURL, 4) // 4 shards
-    if err != nil {
-        log.Fatalf("Failed to connect to Redis: %v", err)
-    }
-    defer redisClient.Close()
+	// Initialize Redis
+	redisClient, err := redis.NewClient(cfg.RedisURL, 4) // 4 shards
+	if err != nil {
+		log.Fatalf("Failed to connect to Redis: %v", err)
+	}
+	defer redisClient.Close()
 
-    // Initialize Kafka producer
-    producer := kafka.NewProducer(cfg.KafkaBroker, "job_executions")
-    defer producer.Close()
+	// Initialize Kafka producer
+	producer := kafka.NewProducer(cfg.KafkaBroker, "job_executions")
+	defer producer.Close()
 
-    // Initialize JWT manager
-    jwtManager := auth.NewJWTManager(cfg.JWTSecret)
+	// Initialize JWT manager
+	jwtManager := auth.NewJWTManager(cfg.JWTSecret)
 
-    // Setup Gin router
-    if gin.Mode() == gin.ReleaseMode {
-        gin.SetMode(gin.ReleaseMode)
-    }
+	// Initialize handlers
+	authHandlers := handlers.NewAuthHandlers(mongoDB.Database, jwtManager)
+	userHandlers := handlers.NewUserHandlers(mongoDB.Database)
+	roleHandlers := handlers.NewRoleHandlers(mongoDB.Database)
+	schedulerHandlers := handlers.NewSchedulerHandlers(mongoDB.Database)
+	imageHandlers := handlers.NewImageHandlers(mongoDB.Database)
+	logHandlers := handlers.NewLogHandlers(mongoDB.Database)
+	monitoringHandlers := handlers.NewMonitoringHandlers()
 
-    router := gin.New()
-    router.Use(gin.Logger())
-    router.Use(gin.Recovery())
+	// Setup Gin router
+	if gin.Mode() == gin.ReleaseMode {
+		gin.SetMode(gin.ReleaseMode)
+	}
 
-    // CORS middleware
-    router.Use(func(c *gin.Context) {
-        c.Header("Access-Control-Allow-Origin", "*")
-        c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
-        c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization")
-        c.Header("Access-Control-Allow-Credentials", "true")
+	router := gin.New()
+	router.Use(gin.Logger())
+	router.Use(gin.Recovery())
 
-        if c.Request.Method == "OPTIONS" {
-            c.AbortWithStatus(204)
-            return
-        }
+	// CORS middleware
+	router.Use(func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization")
+		c.Header("Access-Control-Allow-Credentials", "true")
 
-        c.Next()
-    })
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
 
-    // Health check endpoint
-    router.GET("/health", func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{
-            "status":    "healthy",
-            "timestamp": time.Now().UTC(),
-            "service":   "api",
-        })
-    })
+		c.Next()
+	})
 
-    // API routes
-    api := router.Group("/api")
-    {
-        // Authentication routes (no auth required)
-        authRoutes := api.Group("/auth")
-        {
-            authRoutes.POST("/login", loginHandler(mongoDB.Database, jwtManager))
-            authRoutes.POST("/refresh", refreshHandler(jwtManager))
-            authRoutes.POST("/change-password", auth.AuthMiddleware(jwtManager), changePasswordHandler(mongoDB.Database))
-        }
+	// Health check endpoint
+	router.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status":    "healthy",
+			"timestamp": time.Now().UTC(),
+			"service":   "api",
+		})
+	})
 
-        // Protected routes
-        protected := api.Group("/")
-        protected.Use(auth.AuthMiddleware(jwtManager))
-        {
-            // User info
-            protected.GET("/me", meHandler(mongoDB.Database))
+	// API routes
+	api := router.Group("/api")
+	{
+		// Authentication routes (no auth required)
+		authRoutes := api.Group("/auth")
+		{
+			authRoutes.POST("/login", authHandlers.Login)
+			authRoutes.POST("/refresh", authHandlers.RefreshToken)
+			authRoutes.POST("/change-password", auth.AuthMiddleware(jwtManager), authHandlers.ChangePassword)
+		}
 
-            // Schedulers
-            schedulers := protected.Group("/schedulers")
-            {
-                schedulers.GET("", getSchedulersHandler(mongoDB.Database))
-                schedulers.POST("", createSchedulerHandler(mongoDB.Database))
-                schedulers.GET("/:id", getSchedulerHandler(mongoDB.Database))
-                schedulers.PUT("/:id", updateSchedulerHandler(mongoDB.Database))
-                schedulers.DELETE("/:id", deleteSchedulerHandler(mongoDB.Database))
-                schedulers.POST("/:id/run", runSchedulerHandler(mongoDB.Database, producer))
-                schedulers.GET("/:id/history", getSchedulerHistoryHandler(mongoDB.Database))
-            }
+		// Protected routes
+		protected := api.Group("/")
+		protected.Use(auth.AuthMiddleware(jwtManager))
+		{
+			// User info
+			protected.GET("/me", authHandlers.Me)
 
-            // Users (admin only)
-            users := protected.Group("/users")
-            {
-                users.GET("", getUsersHandler(mongoDB.Database))
-                users.POST("", createUserHandler(mongoDB.Database))
-                users.PUT("/:id", updateUserHandler(mongoDB.Database))
-                users.DELETE("/:id", deleteUserHandler(mongoDB.Database))
-            }
+			// Dashboard stats
+			protected.GET("/dashboard/stats", schedulerHandlers.GetSchedulerStats)
 
-            // Roles
-            roles := protected.Group("/roles")
-            {
-                roles.GET("", getRolesHandler(mongoDB.Database))
-                roles.POST("", createRoleHandler(mongoDB.Database))
-            }
+			// Schedulers
+			schedulers := protected.Group("/schedulers")
+			{
+				schedulers.GET("", schedulerHandlers.GetSchedulers)
+				schedulers.POST("", schedulerHandlers.CreateScheduler)
+				schedulers.GET("/:id", schedulerHandlers.GetScheduler)
+				schedulers.PUT("/:id", schedulerHandlers.UpdateScheduler)
+				schedulers.DELETE("/:id", schedulerHandlers.DeleteScheduler)
+				schedulers.POST("/:id/run", schedulerHandlers.RunScheduler)
+				schedulers.GET("/:id/history", schedulerHandlers.GetSchedulerHistory)
+			}
 
-            // Images
-            images := protected.Group("/images")
-            {
-                images.GET("", getImagesHandler(mongoDB.Database))
-                images.POST("", createImageHandler(mongoDB.Database))
-            }
-        }
-    }
+			// Users (admin only)
+			users := protected.Group("/users")
+			{
+				users.GET("", userHandlers.GetUsers)
+				users.POST("", userHandlers.CreateUser)
+				users.PUT("/:id", userHandlers.UpdateUser)
+				users.DELETE("/:id", userHandlers.DeleteUser)
+				users.POST("/:id/reset-password", userHandlers.ResetPassword)
+			}
 
-    // WebSocket routes for real-time logs
-    router.GET("/ws/logs/:runId", websocketHandler(redisClient))
+			// Roles
+			roles := protected.Group("/roles")
+			{
+				roles.GET("", roleHandlers.GetRoles)
+				roles.POST("", roleHandlers.CreateRole)
+				roles.PUT("/:id", roleHandlers.UpdateRole)
+				roles.DELETE("/:id", roleHandlers.DeleteRole)
+				roles.GET("/permissions", roleHandlers.GetPermissions)
+			}
 
-    // Start server
-    server := &http.Server{
-        Addr:    ":" + cfg.Port,
-        Handler: router,
-    }
+			// Images
+			images := protected.Group("/images")
+			{
+				images.GET("", imageHandlers.GetImages)
+				images.POST("", imageHandlers.CreateImage)
+				images.PUT("/:id", imageHandlers.UpdateImage)
+				images.DELETE("/:id", imageHandlers.DeleteImage)
+			}
 
-    // Graceful shutdown
-    go func() {
-        sigChan := make(chan os.Signal, 1)
-        signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-        <-sigChan
+			// Logs
+			logs := protected.Group("/logs")
+			{
+				logs.GET("", logHandlers.GetLogs)
+				logs.GET("/stats", logHandlers.GetLogStats)
+				logs.GET("/sources", logHandlers.GetLogSources)
+			}
 
-        log.Println("🛑 Shutting down API server...")
+			// Monitoring
+			monitoring := protected.Group("/monitoring")
+			{
+				monitoring.GET("", monitoringHandlers.GetFullMonitoring)
+				monitoring.GET("/metrics", monitoringHandlers.GetSystemMetrics)
+				monitoring.GET("/services", monitoringHandlers.GetServices)
+				monitoring.GET("/alerts", monitoringHandlers.GetAlerts)
+			}
+		}
+	}
 
-        ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-        defer cancel()
+	// WebSocket routes for real-time logs
+	router.GET("/ws/logs/:runId", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"message": "WebSocket logs - to be implemented"}) })
 
-        if err := server.Shutdown(ctx); err != nil {
-            log.Printf("❌ Server shutdown error: %v", err)
-        }
-    }()
+	// Start server
+	server := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: router,
+	}
 
-    log.Printf("🚀 API Server starting on port %s", cfg.Port)
-    log.Printf("📱 Frontend: http://localhost:3000")
-    log.Printf("🔧 API: http://localhost:%s", cfg.Port)
-    log.Printf("📊 Health: http://localhost:%s/health", cfg.Port)
+	// Graceful shutdown
+	go func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		<-sigChan
 
-    if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-        log.Fatalf("❌ Failed to start server: %v", err)
-    }
+		log.Println("🛑 Shutting down API server...")
 
-    log.Println("✅ API server stopped")
-}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 
-// Placeholder handlers - these will be implemented in separate files
-func loginHandler(db *mongo.Database, jwtManager *auth.JWTManager) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Login handler - to be implemented"})
-    }
-}
+		if err := server.Shutdown(ctx); err != nil {
+			log.Printf("❌ Server shutdown error: %v", err)
+		}
+	}()
 
-func refreshHandler(jwtManager *auth.JWTManager) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Refresh handler - to be implemented"})
-    }
-}
+	log.Printf("🚀 API Server starting on port %s", cfg.Port)
+	log.Printf("📱 Frontend: http://localhost:3000")
+	log.Printf("🔧 API: http://localhost:%s", cfg.Port)
+	log.Printf("📊 Health: http://localhost:%s/health", cfg.Port)
 
-func changePasswordHandler(db *mongo.Database) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Change password handler - to be implemented"})
-    }
-}
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("❌ Failed to start server: %v", err)
+	}
 
-func meHandler(db *mongo.Database) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Me handler - to be implemented"})
-    }
-}
-
-func getSchedulersHandler(db *mongo.Database) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Get schedulers handler - to be implemented"})
-    }
-}
-
-func createSchedulerHandler(db *mongo.Database) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Create scheduler handler - to be implemented"})
-    }
-}
-
-func getSchedulerHandler(db *mongo.Database) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Get scheduler handler - to be implemented"})
-    }
-}
-
-func updateSchedulerHandler(db *mongo.Database) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Update scheduler handler - to be implemented"})
-    }
-}
-
-func deleteSchedulerHandler(db *mongo.Database) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Delete scheduler handler - to be implemented"})
-    }
-}
-
-func runSchedulerHandler(db *mongo.Database, producer *kafka.Producer) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Run scheduler handler - to be implemented"})
-    }
-}
-
-func getSchedulerHistoryHandler(db *mongo.Database) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Get scheduler history handler - to be implemented"})
-    }
-}
-
-func getUsersHandler(db *mongo.Database) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Get users handler - to be implemented"})
-    }
-}
-
-func createUserHandler(db *mongo.Database) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Create user handler - to be implemented"})
-    }
-}
-
-func updateUserHandler(db *mongo.Database) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Update user handler - to be implemented"})
-    }
-}
-
-func deleteUserHandler(db *mongo.Database) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Delete user handler - to be implemented"})
-    }
-}
-
-func getRolesHandler(db *mongo.Database) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Get roles handler - to be implemented"})
-    }
-}
-
-func createRoleHandler(db *mongo.Database) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Create role handler - to be implemented"})
-    }
-}
-
-func getImagesHandler(db *mongo.Database) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Get images handler - to be implemented"})
-    }
-}
-
-func createImageHandler(db *mongo.Database) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "Create image handler - to be implemented"})
-    }
-}
-
-func websocketHandler(redisClient *redis.Client) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"message": "WebSocket handler - to be implemented"})
-    }
+	log.Println("✅ API server stopped")
 }

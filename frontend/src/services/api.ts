@@ -48,6 +48,11 @@ export const authAPI = {
     me: () => api.get('/api/me'),
 };
 
+// Dashboard API
+export const dashboardAPI = {
+    getStats: () => api.get('/api/dashboard/stats'),
+};
+
 // Schedulers API
 export const schedulersAPI = {
     getAll: () => api.get('/api/schedulers'),
@@ -74,6 +79,9 @@ export const usersAPI = {
     update: (id: string, user: any) => api.put(`/api/users/${id}`, user),
     
     delete: (id: string) => api.delete(`/api/users/${id}`),
+    
+    resetPassword: (id: string, newPassword: string) => 
+        api.post(`/api/users/${id}/reset-password`, { newPassword }),
 };
 
 // Roles API
@@ -81,6 +89,12 @@ export const rolesAPI = {
     getAll: () => api.get('/api/roles'),
     
     create: (role: any) => api.post('/api/roles', role),
+    
+    update: (id: string, role: any) => api.put(`/api/roles/${id}`, role),
+    
+    delete: (id: string) => api.delete(`/api/roles/${id}`),
+    
+    getPermissions: () => api.get('/api/roles/permissions'),
 };
 
 // Images API
@@ -88,6 +102,30 @@ export const imagesAPI = {
     getAll: () => api.get('/api/images'),
     
     create: (image: any) => api.post('/api/images', image),
+    
+    update: (id: string, image: any) => api.put(`/api/images/${id}`, image),
+    
+    delete: (id: string) => api.delete(`/api/images/${id}`),
+};
+
+// Logs API
+export const logsAPI = {
+    getAll: (params?: any) => api.get('/api/logs', { params }),
+    
+    getStats: () => api.get('/api/logs/stats'),
+    
+    getSources: () => api.get('/api/logs/sources'),
+};
+
+// Monitoring API
+export const monitoringAPI = {
+    getAll: () => api.get('/api/monitoring'),
+    
+    getMetrics: () => api.get('/api/monitoring/metrics'),
+    
+    getServices: () => api.get('/api/monitoring/services'),
+    
+    getAlerts: () => api.get('/api/monitoring/alerts'),
 };
 
 export default api;

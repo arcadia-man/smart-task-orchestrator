@@ -7,10 +7,17 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm ci --only=production
+RUN npm ci
 
-# Copy source code
-COPY . .
+# Copy source code (excluding node_modules)
+COPY public ./public
+COPY src ./src
+COPY index.html .
+COPY vite.config.js .
+COPY tsconfig.json .
+COPY tsconfig.node.json .
+COPY tailwind.config.js .
+COPY postcss.config.js .
 
 # Build the app
 RUN npm run build

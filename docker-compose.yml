@@ -1,5 +1,4 @@
 # Smart Task Orchestrator - Production Ready Deployment
-version: '3.8'
 
 services:
   # Backend Services
@@ -11,15 +10,15 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - MONGO_URI=mongodb://mongodb:27017/orchestrator
+      - MONGO_URI=mongodb://mongodb:27017
+      - DB_NAME=orchestrator
       - REDIS_URL=redis://redis:6379
-      - KAFKA_BROKER=kafka:9092
+      - KAFKA_BROKER=${KAFKA_BROKER:-kafka:9092}
       - JWT_SECRET=your-jwt-secret-change-in-production
       - PORT=8080
     depends_on:
       - mongodb
       - redis
-      - kafka
     restart: unless-stopped
     networks:
       - orchestrator-network
@@ -31,13 +30,13 @@ services:
     container_name: orchestrator-scheduler
     command: ["./scheduler"]
     environment:
-      - MONGO_URI=mongodb://mongodb:27017/orchestrator
+      - MONGO_URI=mongodb://mongodb:27017
+      - DB_NAME=orchestrator
       - REDIS_URL=redis://redis:6379
-      - KAFKA_BROKER=kafka:9092
+      - KAFKA_BROKER=${KAFKA_BROKER:-kafka:9092}
     depends_on:
       - mongodb
       - redis
-      - kafka
     restart: unless-stopped
     networks:
       - orchestrator-network
@@ -49,13 +48,13 @@ services:
     container_name: orchestrator-worker
     command: ["./worker"]
     environment:
-      - MONGO_URI=mongodb://mongodb:27017/orchestrator
+      - MONGO_URI=mongodb://mongodb:27017
+      - DB_NAME=orchestrator
       - REDIS_URL=redis://redis:6379
-      - KAFKA_BROKER=kafka:9092
+      - KAFKA_BROKER=${KAFKA_BROKER:-kafka:9092}
     depends_on:
       - mongodb
       - redis
-      - kafka
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # For Docker-in-Docker
     restart: unless-stopped
@@ -69,7 +68,7 @@ services:
       dockerfile: Dockerfile
     container_name: orchestrator-frontend
     ports:
-      - "3000:80"
+      - "3001:80"
     environment:
       - REACT_APP_API_URL=http://localhost:8080
     depends_on:

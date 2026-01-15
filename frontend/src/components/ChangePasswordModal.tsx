@@ -5,7 +5,7 @@ import { authAPI } from '../services/api';
 interface ChangePasswordModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onSuccess: () => void;
+    onSuccess: (newToken?: string) => void;
     onError: (error: string) => void;
     isInitialLogin?: boolean;
 }
@@ -55,60 +55,41 @@ const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        console.log('🔐 CHANGE_PASSWORD: Form submitted');
-        console.log('🔐 CHANGE_PASSWORD: Old password length:', oldPassword.length);
-        console.log('🔐 CHANGE_PASSWORD: New password length:', newPassword.length);
-        console.log('🔐 CHANGE_PASSWORD: Is initial login:', isInitialLogin);
         
         if (!validateForm()) {
-            console.log('🔐 CHANGE_PASSWORD: Form validation failed');
             return;
         }
 
         setLoading(true);
 
         try {
-            console.log('🔐 CHANGE_PASSWORD: Making API call...');
-            
-            // For testing - simulate successful password change
-            if (oldPassword === 'admin' && newPassword.length >= 8) {
-                console.log('🔐 CHANGE_PASSWORD: Using test mode - simulating success');
-                setTimeout(() => {
-                    console.log('🔐 CHANGE_PASSWORD: Mock API call successful');
-                    onSuccess();
-                    // Don't call onClose() here - let the parent handle it
-                }, 1000);
-                return;
-            }
-            
-            await authAPI.changePassword(oldPassword, newPassword);
-            console.log('🔐 CHANGE_PASSWORD: API call successful');
-            onSuccess();
-            onClose();
+            const response = await authAPI.changePassword(oldPassword, newPassword);
+            const newToken = response.data?.access_token;
             
             // Reset form
             setOldPassword('');
             setNewPassword('');
             setConfirmPassword('');
             setErrors({});
+            
+            onSuccess(newToken);
         } catch (error: any) {
-            console.log('🔐 CHANGE_PASSWORD: API call failed:', error);
-            console.log('🔐 CHANGE_PASSWORD: Error response:', error.response?.data);
-            const errorMessage = error.response?.data?.error || 'Failed to change password';
+            let errorMessage = error.response?.data?.error || 'Failed to change password';
+            
+            // Handle specific error case for initial login issues
+            if (isInitialLogin && (errorMessage.includes('invalid') || errorMessage.includes('incorrect'))) {
+                errorMessage = 'Unable to change password. Please contact administrator for assistance.';
+            }
+            
             onError(errorMessage);
         } finally {
             setLoading(false);
-            console.log('🔐 CHANGE_PASSWORD: Process completed');
         }
     };
 
     if (!isOpen) {
-        console.log('🔐 MODAL: Modal is closed, not rendering');
         return null;
     }
-
-    console.log('🔐 MODAL: Rendering change password modal');
-    console.log('🔐 MODAL: isInitialLogin:', isInitialLogin);
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9998]">

@@ -1,44 +1,56 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Play, Pause, Clock, CheckCircle, XCircle } from 'lucide-react';
+import { Plus, Play, Pause, Clock, CheckCircle, XCircle, Calendar } from 'lucide-react';
+import { dashboardAPI, schedulersAPI } from '../services/api';
+import { useToastContext } from '../contexts/ToastContext';
 
 const Dashboard: React.FC = () => {
-    // Mock data - will be replaced with real API calls
-    const schedulers = [
-        {
-            id: '1',
-            name: 'Daily ETL Pipeline',
-            description: 'Process daily data from multiple sources',
-            status: 'active',
-            jobType: 'cron',
-            cronExpr: '0 2 * * *',
-            lastRun: '2025-10-22T02:00:00Z',
-            nextRun: '2025-10-23T02:00:00Z',
-            lastStatus: 'success',
-        },
-        {
-            id: '2',
-            name: 'Health Check Monitor',
-            description: 'Monitor system health every 5 minutes',
-            status: 'active',
-            jobType: 'interval',
-            intervalSeconds: 300,
-            lastRun: '2025-10-22T10:25:00Z',
-            nextRun: '2025-10-22T10:30:00Z',
-            lastStatus: 'running',
-        },
-        {
-            id: '3',
-            name: 'Weekly Report Generator',
-            description: 'Generate weekly analytics report',
-            status: 'paused',
-            jobType: 'cron',
-            cronExpr: '0 9 * * 1',
-            lastRun: '2025-10-15T09:00:00Z',
-            nextRun: null,
-            lastStatus: 'failed',
-        },
-    ];
+    const [schedulers, setSchedulers] = useState<any[]>([]);
+    const [stats, setStats] = useState<any>({});
+    const [loading, setLoading] = useState(true);
+    const toast = useToastContext();
+
+    useEffect(() => {
+        fetchData();
+    }, []);
+
+    const fetchData = async () => {
+        try {
+            setLoading(true);
+            const [schedulersResponse, statsResponse] = await Promise.all([
+                schedulersAPI.getAll(),
+                dashboardAPI.getStats()
+            ]);
+            
+            setSchedulers(schedulersResponse.data.slice(0, 5)); // Show only first 5 for dashboard
+            setStats(statsResponse.data);
+        } catch (error: any) {
+            toast.error('Failed to load dashboard data', error.response?.data?.error || 'Please try again');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleRunScheduler = async (schedulerId: string) => {
+        try {
+            await schedulersAPI.run(schedulerId);
+            toast.success('Scheduler started', 'The scheduler has been queued for execution');
+            fetchData(); // Refresh data
+        } catch (error: any) {
+            toast.error('Failed to run scheduler', error.response?.data?.error || 'Please try again');
+        }
+    };
+
+    const handleToggleScheduler = async (schedulerId: string, currentStatus: string) => {
+        try {
+            const newStatus = currentStatus === 'active' ? 'paused' : 'active';
+            await schedulersAPI.update(schedulerId, { status: newStatus });
+            toast.success('Scheduler updated', `Scheduler has been ${newStatus}`);
+            fetchData(); // Refresh data
+        } catch (error: any) {
+            toast.error('Failed to update scheduler', error.response?.data?.error || 'Please try again');
+        }
+    };
 
     const getStatusIcon = (status: string) => {
         switch (status) {
@@ -95,7 +107,9 @@ const Dashboard: React.FC = () => {
                         </div>
                         <div className="ml-4">
                             <p className="text-sm font-medium text-gray-600">Total Schedulers</p>
-                            <p className="text-2xl font-bold text-gray-900">3</p>
+                            <p className="text-2xl font-bold text-gray-900">
+                                {loading ? '...' : stats.total || 0}
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -106,7 +120,9 @@ const Dashboard: React.FC = () => {
                         </div>
                         <div className="ml-4">
                             <p className="text-sm font-medium text-gray-600">Active</p>
-                            <p className="text-2xl font-bold text-gray-900">2</p>
+                            <p className="text-2xl font-bold text-gray-900">
+                                {loading ? '...' : stats.active || 0}
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -117,7 +133,9 @@ const Dashboard: React.FC = () => {
                         </div>
                         <div className="ml-4">
                             <p className="text-sm font-medium text-gray-600">Paused</p>
-                            <p className="text-2xl font-bold text-gray-900">1</p>
+                            <p className="text-2xl font-bold text-gray-900">
+                                {loading ? '...' : stats.paused || 0}
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -127,8 +145,10 @@ const Dashboard: React.FC = () => {
                             <XCircle className="w-6 h-6 text-red-600" />
                         </div>
                         <div className="ml-4">
-                            <p className="text-sm font-medium text-gray-600">Failed (24h)</p>
-                            <p className="text-2xl font-bold text-gray-900">1</p>
+                            <p className="text-sm font-medium text-gray-600">Inactive</p>
+                            <p className="text-2xl font-bold text-gray-900">
+                                {loading ? '...' : stats.inactive || 0}
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -154,63 +174,87 @@ const Dashboard: React.FC = () => {
                             </tr>
                         </thead>
                         <tbody>
-                            {schedulers.map((scheduler) => (
-                                <tr key={scheduler.id} className="border-b border-gray-100 hover:bg-gray-50">
-                                    <td className="py-4 px-4">
-                                        <div>
-                                            <Link
-                                                to={`/schedulers/${scheduler.id}`}
-                                                className="font-medium text-blue-600 hover:text-blue-800"
-                                            >
-                                                {scheduler.name}
-                                            </Link>
-                                            <p className="text-sm text-gray-500">{scheduler.description}</p>
-                                        </div>
-                                    </td>
-                                    <td className="py-4 px-4">
-                                        <span className={getStatusBadge(scheduler.status)}>
-                                            {scheduler.status}
-                                        </span>
-                                    </td>
-                                    <td className="py-4 px-4">
-                                        <span className="text-sm text-gray-600">{scheduler.jobType}</span>
-                                    </td>
-                                    <td className="py-4 px-4">
-                                        <span className="text-sm text-gray-600">
-                                            {scheduler.jobType === 'cron' 
-                                                ? scheduler.cronExpr 
-                                                : `${scheduler.intervalSeconds}s`}
-                                        </span>
-                                    </td>
-                                    <td className="py-4 px-4">
-                                        <div className="flex items-center">
-                                            {getStatusIcon(scheduler.lastStatus)}
-                                            <span className="ml-2 text-sm text-gray-600">
-                                                {scheduler.lastRun 
-                                                    ? new Date(scheduler.lastRun).toLocaleString()
-                                                    : 'Never'}
-                                            </span>
-                                        </div>
-                                    </td>
-                                    <td className="py-4 px-4">
-                                        <span className="text-sm text-gray-600">
-                                            {scheduler.nextRun 
-                                                ? new Date(scheduler.nextRun).toLocaleString()
-                                                : 'N/A'}
-                                        </span>
-                                    </td>
-                                    <td className="py-4 px-4">
-                                        <div className="flex items-center space-x-2">
-                                            <button className="btn btn-secondary text-sm">
-                                                <Play className="w-4 h-4" />
-                                            </button>
-                                            <button className="btn btn-secondary text-sm">
-                                                <Pause className="w-4 h-4" />
-                                            </button>
-                                        </div>
+                            {loading ? (
+                                <tr>
+                                    <td colSpan={7} className="py-8 text-center text-gray-500">
+                                        Loading schedulers...
                                     </td>
                                 </tr>
-                            ))}
+                            ) : schedulers.length === 0 ? (
+                                <tr>
+                                    <td colSpan={7} className="py-8 text-center text-gray-500">
+                                        No schedulers found. <Link to="/schedulers/create" className="text-blue-600 hover:text-blue-800">Create your first scheduler</Link>
+                                    </td>
+                                </tr>
+                            ) : (
+                                schedulers.map((scheduler) => (
+                                    <tr key={scheduler.id} className="border-b border-gray-100 hover:bg-gray-50">
+                                        <td className="py-4 px-4">
+                                            <div>
+                                                <Link
+                                                    to={`/schedulers/${scheduler.id}`}
+                                                    className="font-medium text-blue-600 hover:text-blue-800"
+                                                >
+                                                    {scheduler.name}
+                                                </Link>
+                                                <p className="text-sm text-gray-500">{scheduler.description}</p>
+                                            </div>
+                                        </td>
+                                        <td className="py-4 px-4">
+                                            <span className={getStatusBadge(scheduler.status)}>
+                                                {scheduler.status}
+                                            </span>
+                                        </td>
+                                        <td className="py-4 px-4">
+                                            <span className="text-sm text-gray-600">{scheduler.jobType}</span>
+                                        </td>
+                                        <td className="py-4 px-4">
+                                            <span className="text-sm text-gray-600">
+                                                {scheduler.jobType === 'cron' 
+                                                    ? scheduler.cronExpr 
+                                                    : scheduler.jobType === 'interval'
+                                                    ? `${scheduler.intervalSeconds}s`
+                                                    : 'Immediate'}
+                                            </span>
+                                        </td>
+                                        <td className="py-4 px-4">
+                                            <div className="flex items-center">
+                                                {getStatusIcon(scheduler.lastStatus)}
+                                                <span className="ml-2 text-sm text-gray-600">
+                                                    {scheduler.lastRun 
+                                                        ? new Date(scheduler.lastRun).toLocaleString()
+                                                        : 'Never'}
+                                                </span>
+                                            </div>
+                                        </td>
+                                        <td className="py-4 px-4">
+                                            <span className="text-sm text-gray-600">
+                                                {scheduler.nextRun 
+                                                    ? new Date(scheduler.nextRun).toLocaleString()
+                                                    : 'N/A'}
+                                            </span>
+                                        </td>
+                                        <td className="py-4 px-4">
+                                            <div className="flex items-center space-x-2">
+                                                <button 
+                                                    className="btn btn-secondary text-sm"
+                                                    onClick={() => handleRunScheduler(scheduler.id)}
+                                                    title="Run Now"
+                                                >
+                                                    <Play className="w-4 h-4" />
+                                                </button>
+                                                <button 
+                                                    className="btn btn-secondary text-sm"
+                                                    onClick={() => handleToggleScheduler(scheduler.id, scheduler.status)}
+                                                    title={scheduler.status === 'active' ? 'Pause' : 'Resume'}
+                                                >
+                                                    {scheduler.status === 'active' ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))
+                            )}
                         </tbody>
                     </table>
                 </div>
