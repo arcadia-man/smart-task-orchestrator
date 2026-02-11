@@ -1,110 +1,23 @@
 # Smart Task Orchestrator
 
-A full-stack job scheduling and execution system built with Go, Kafka, MongoDB, React, and Tailwind CSS.
+A production-ready distributed job scheduling system with real-time monitoring, RBAC, and Docker container execution.
 
-## Features
-
-- ✅ Job creation and management
-- ✅ Retry mechanism with exponential backoff
-- ✅ Cron job scheduling
-- ✅ Real-time job monitoring dashboard
-- ✅ Dead Letter Queue (DLQ) for failed jobs
-- ✅ REST API for job operations
-- ✅ Kafka-based event pipeline
-
-## Tech Stack
-
-**Backend:**
-- Go with Gin framework
-- MongoDB for job storage
-- Kafka for message queuing
-- Cron scheduler for periodic jobs
-
-**Frontend:**
-- React with Vite
-- Tailwind CSS for styling
-- React Query for data fetching
-- React Router for navigation
-
-## Prerequisites
-
-1. **Go 1.21+**
-2. **Node.js 18+**
-3. **Docker & Docker Compose**
-4. **Kafka** (running locally on port 9092)
-
-## Quick Start
-
-### Prerequisites
-1. **Kafka running on localhost:9092** (you already have this)
-2. **Go 1.21+**
-3. **Node.js 18+**
-4. **Docker**
-
-### Simple Commands
+## 🚀 Quick Start
 
 ```bash
+# Clone and start
+git clone <your-repo>
 cd smart-task-orchestrator
 
-# Install frontend dependencies (first time only)
-cd frontend && npm install && cd ..
-
 # Start all services
-./run.sh start
+docker-compose up --build
 
-# Test the API
-./test.sh
-
-# Stop all services
-./run.sh stop
-
-# Check service status
-./run.sh status
+# Access the application
+# Frontend: http://localhost:3000
+# API: http://localhost:8080
 ```
 
-**That's it!** 🎉
-
-- **Frontend**: http://localhost:3000
-- **API**: http://localhost:8080
-- **MongoDB**: localhost:27017 (auto-started)
-- **Kafka**: localhost:9092 (your existing setup)
-
-## API Endpoints
-
-- `POST /api/jobs` - Create a new job
-- `GET /api/jobs` - Get all jobs
-- `GET /api/jobs/:id` - Get job by ID
-- `POST /api/jobs/:id/retry` - Retry a failed job
-- `GET /api/jobs/:id/status` - Get job status
-
-## Job Types
-
-### Immediate Jobs
-Execute immediately when created:
-
-```json
-{
-  "name": "Process User Data",
-  "type": "immediate",
-  "payload": {"userId": 123},
-  "maxRetries": 3
-}
-```
-
-### Cron Jobs
-Execute on a schedule:
-
-```json
-{
-  "name": "Daily Report",
-  "type": "cron",
-  "cronExpr": "0 9 * * *",
-  "payload": {"reportType": "daily"},
-  "maxRetries": 2
-}
-```
-
-## Architecture
+## 🏗️ Architecture
 
 ```
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
@@ -113,82 +26,99 @@ Execute on a schedule:
 └─────────────┘    └─────────────┘    └─────────────┘
                            │
                            ▼
-                   ┌─────────────┐
-                   │    Kafka    │
-                   │             │
-                   └─────────────┘
-                           │
-                           ▼
                    ┌─────────────┐    ┌─────────────┐
-                   │   Worker    │    │  Scheduler  │
-                   │ (Consumer)  │    │   (Cron)    │
+                   │    Redis    │    │    Kafka    │
+                   │  (Sharded)  │    │             │
+                   └─────────────┘    └─────────────┘
+                           │                   │
+                           ▼                   ▼
+                   ┌─────────────┐    ┌─────────────┐
+                   │  Scheduler  │    │   Worker    │
+                   │  Library    │    │ (Container) │
                    └─────────────┘    └─────────────┘
 ```
 
-## Development
+## 🔧 Services
 
-### Backend Development
+- **API Server**: REST endpoints, authentication, WebSocket for logs
+- **Scheduler**: Precompute + poller for exact timing (1-5s precision)
+- **Worker**: Docker container execution with real-time log streaming
+- **Frontend**: React dashboard with live monitoring
+
+## 🔐 Default Credentials
+
+- **Username**: `admin`
+- **Password**: `admin` (must change on first login)
+
+## 📊 Features
+
+- ✅ Sub-second job scheduling precision
+- ✅ Real-time log streaming with ANSI colors
+- ✅ Role-based access control (RBAC)
+- ✅ Docker container execution
+- ✅ Horizontal scalability
+- ✅ Production-ready deployment
+
+## 🛠️ Development
 
 ```bash
+# Backend development
 cd backend
-
-# Install dependencies
 go mod tidy
-
-# Run API server
 go run cmd/api/main.go
 
-# Run worker
-go run cmd/worker/main.go
-
-# Run scheduler
-go run cmd/scheduler/main.go
+# Frontend development  
+cd frontend
+npm install
+npm run dev
 ```
 
-### Frontend Development
+## 📝 Configuration
+
+Environment variables in `docker-compose.yml`:
+
+- `MONGO_URI`: MongoDB connection string
+- `REDIS_URL`: Redis connection string  
+- `KAFKA_BROKER`: Kafka broker address
+- `JWT_SECRET`: JWT signing secret (change in production)
+
+## 🔍 Monitoring
+
+- **Logs**: `docker-compose logs -f <service>`
+- **Health**: API endpoints at `/health`
+- **Metrics**: Prometheus endpoints at `/metrics`
+
+## 📚 API Documentation
+
+- `POST /api/auth/login` - User authentication
+- `GET /api/schedulers` - List all schedulers
+- `POST /api/schedulers` - Create new scheduler
+- `POST /api/schedulers/:id/run` - Manual job execution
+- `GET /ws/logs/:runId` - WebSocket log streaming
+
+## 🚀 Production Deployment
+
+1. Update environment variables in `docker-compose.yml`
+2. Set strong JWT secret
+3. Configure proper MongoDB and Redis persistence
+4. Set up reverse proxy (nginx) for SSL termination
+5. Configure monitoring and alerting
+
+## 🔧 Troubleshooting
 
 ```bash
-cd frontend
+# Check service status
+docker-compose ps
 
-# Install dependencies
-npm install
+# View logs
+docker-compose logs -f api
+docker-compose logs -f scheduler
+docker-compose logs -f worker
 
-# Start dev server
-npm run dev
-
-# Build for production
-npm run build
+# Restart services
+docker-compose restart <service>
 ```
 
-## Testing the System
+## 📄 License
 
-1. **Create a Job**: Use the frontend or API to create a new job
-2. **Monitor Execution**: Watch the job status change in real-time
-3. **Test Retries**: Create a job that will fail to see retry mechanism
-4. **Cron Jobs**: Create a cron job and watch it execute periodically
-
-## Configuration
-
-Environment variables (`.env`):
-
-```env
-MONGO_URI=mongodb://localhost:27017/orchestrator
-KAFKA_BROKER=localhost:9092
-DB_NAME=orchestrator
-PORT=8080
-```
-
-## Troubleshooting
-
-1. **Kafka Connection Issues**: Ensure Kafka is running on localhost:9092
-2. **MongoDB Connection**: Check if MongoDB container is running
-3. **Port Conflicts**: Make sure ports 8080, 27017, and 3000 are available
-
-## Next Steps
-
-- Add authentication and authorization
-- Implement job dependencies
-- Add more sophisticated scheduling options
-- Implement job result storage
-- Add metrics and monitoring
-- Implement job cancellation
+MIT License - see LICENSE file for details.

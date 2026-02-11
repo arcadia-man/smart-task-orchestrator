@@ -1,160 +1,75 @@
 package main
 
 import (
-	"context"
-	"fmt"
-	"log"
-	"math/rand"
-	"time"
+    "context"
+    "log"
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
 
-	"smart-task-orchestrator/internal/config"
-	"smart-task-orchestrator/internal/db"
-	"smart-task-orchestrator/internal/jobs"
-	"smart-task-orchestrator/internal/kafka"
-	"smart-task-orchestrator/internal/retry"
+    "smart-task-orchestrator/internal/config"
+    "smart-task-orchestrator/internal/db"
+    "smart-task-orchestrator/internal/worker"
+    "smart-task-orchestrator/pkg/kafka"
+    "smart-task-orchestrator/pkg/redis"
 )
 
 func main() {
-	cfg := config.Load()
+    log.Println("🚀 Starting Smart Task Orchestrator - Worker Service")
 
-	// Initialize MongoDB
-	mongoDB, err := db.NewMongoDB(cfg.MongoURI, cfg.DBName)
-	if err != nil {
-		log.Fatal("Failed to connect to MongoDB:", err)
-	}
-	defer mongoDB.Close()
+    // Load configuration
+    cfg := config.Load()
 
-	// Initialize services
-	jobService := jobs.NewService(mongoDB.Database)
-	consumer := kafka.NewConsumer(cfg.KafkaBroker, "jobs.execute", "worker-group-v2")
-	producer := kafka.NewProducer(cfg.KafkaBroker)
-	defer consumer.Close()
-	defer producer.Close()
+    // Initialize database
+    mongoDB, err := db.NewMongoDB(cfg.MongoURI, cfg.DBName)
+    if err != nil {
+        log.Fatalf("Failed to connect to MongoDB: %v", err)
+    }
+    defer mongoDB.Close()
 
-	log.Println("🔄 Worker started, waiting for jobs...")
+    // Initialize Redis
+    redisClient, err := redis.NewClient(cfg.RedisURL, 4)
+    if err != nil {
+        log.Fatalf("Failed to connect to Redis: %v", err)
+    }
+    defer redisClient.Close()
 
-	ctx := context.Background()
-	errorCount := 0
-	maxErrors := 10
+    // Initialize Kafka consumer
+    consumer := kafka.NewConsumer(cfg.KafkaBroker, "job_executions", "worker-group")
+    defer consumer.Close()
 
-	for {
-		// Read message from Kafka
-		msg, err := consumer.ReadMessage(ctx)
-		if err != nil {
-			// Handle timeout errors differently (they're expected)
-			if err.Error() == "timeout waiting for message" ||
-				err.Error() == "failed to read message: context deadline exceeded" {
-				log.Printf("⏰ No messages available, waiting...")
-				time.Sleep(5 * time.Second)
-				continue
-			}
+    // Initialize worker service
+    workerService := worker.NewWorkerService(mongoDB.Database, redisClient, consumer, cfg.DockerHost)
 
-			errorCount++
-			log.Printf("Error reading message (%d/%d): %v", errorCount, maxErrors, err)
+    // Start worker service
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel()
 
-			// If too many consecutive errors, exit to prevent infinite loop
-			if errorCount >= maxErrors {
-				log.Fatal("Too many consecutive errors, shutting down worker")
-			}
+    go func() {
+        if err := workerService.Start(ctx); err != nil {
+            log.Fatalf("Worker service failed: %v", err)
+        }
+    }()
 
-			// Exponential backoff for errors
-			backoffTime := time.Duration(errorCount) * time.Second
-			log.Printf("Waiting %v before retry...", backoffTime)
-			time.Sleep(backoffTime)
-			continue
-		}
+    // Wait for shutdown signal
+    sigChan := make(chan os.Signal, 1)
+    signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-		// Reset error count on successful read
-		errorCount = 0
+    log.Println("✅ Worker service started")
+    log.Println("🔄 Listening for job execution messages...")
+    log.Println("🐳 Docker host:", cfg.DockerHost)
+    log.Println("📊 Press Ctrl+C to stop")
 
-		// Process the job
-		processJob(ctx, jobService, producer, msg)
-	}
-}
+    <-sigChan
 
-func processJob(ctx context.Context, jobService *jobs.Service, producer *kafka.Producer, msg *kafka.JobMessage) {
-	jobID := msg.JobID
-	log.Printf("🔨 Processing job: %s", jobID)
+    log.Println("🛑 Shutting down worker service...")
 
-	// Update job status to running
-	err := jobService.UpdateJobStatus(ctx, jobID, jobs.StatusRunning, "Job execution started")
-	if err != nil {
-		log.Printf("Failed to update job status: %v", err)
-		return
-	}
+    // Cancel context to stop worker
+    cancel()
 
-	// Simulate job execution (replace with actual business logic)
-	success := simulateJobExecution(msg.Payload)
+    // Give worker time to finish current jobs
+    time.Sleep(5 * time.Second)
 
-	if success {
-		// Job completed successfully
-		err = jobService.UpdateJobStatus(ctx, jobID, jobs.StatusCompleted, "Job completed successfully")
-		if err != nil {
-			log.Printf("Failed to update job status: %v", err)
-		}
-		log.Printf("✅ Job %s completed successfully", jobID)
-	} else {
-		// Job failed, handle retry logic
-		handleJobFailure(ctx, jobService, producer, jobID)
-	}
-}
-
-func simulateJobExecution(payload map[string]any) bool {
-	// Simulate processing time
-	processingTime := time.Duration(rand.Intn(3)+1) * time.Second
-	time.Sleep(processingTime)
-
-	// Simulate 70% success rate
-	return rand.Float32() < 0.7
-}
-
-func handleJobFailure(ctx context.Context, jobService *jobs.Service, producer *kafka.Producer, jobID string) {
-	log.Printf("❌ Job %s failed", jobID)
-
-	// Get current job to check retry count
-	job, err := jobService.GetJobByID(ctx, jobID)
-	if err != nil {
-		log.Printf("Failed to get job: %v", err)
-		return
-	}
-
-	// Check if we should retry
-	if retry.ShouldRetry(job.RetryCount, job.MaxRetries) {
-		// Calculate backoff delay
-		delay := retry.CalculateBackoff(job.RetryCount)
-		log.Printf("🔄 Scheduling retry for job %s after %v", jobID, delay)
-
-		// Update job status
-		err = jobService.UpdateJobStatus(ctx, jobID, jobs.StatusScheduled,
-			fmt.Sprintf("Job failed, scheduled for retry after %v", delay))
-		if err != nil {
-			log.Printf("Failed to update job status: %v", err)
-			return
-		}
-
-		// Schedule retry (in a real system, you might use a delay queue or scheduler)
-		go func() {
-			time.Sleep(delay)
-			err := producer.PublishJob(ctx, "jobs.execute", jobID, job.Payload)
-			if err != nil {
-				log.Printf("Failed to republish job for retry: %v", err)
-			} else {
-				jobService.UpdateJobStatus(ctx, jobID, jobs.StatusQueued, "Job queued for retry")
-			}
-		}()
-	} else {
-		// Max retries exceeded, move to DLQ
-		log.Printf("💀 Job %s exceeded max retries, moving to DLQ", jobID)
-
-		err = jobService.UpdateJobStatus(ctx, jobID, jobs.StatusFailed, "Job failed after maximum retries")
-		if err != nil {
-			log.Printf("Failed to update job status: %v", err)
-		}
-
-		// Publish to DLQ
-		err = producer.PublishJob(ctx, "jobs.failed", jobID, job.Payload)
-		if err != nil {
-			log.Printf("Failed to publish to DLQ: %v", err)
-		}
-	}
+    log.Println("✅ Worker service stopped")
 }

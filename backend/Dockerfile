@@ -1,31 +1,38 @@
+# Multi-stage build for Go backend
 FROM golang:1.21-alpine AS builder
 
+# Install git and ca-certificates
+RUN apk add --no-cache git ca-certificates
+
+# Set working directory
 WORKDIR /app
 
 # Copy go mod files
 COPY go.mod go.sum ./
+
+# Download dependencies
 RUN go mod download
 
 # Copy source code
 COPY . .
 
-# Build the application
-RUN go build -o api cmd/api/main.go
-RUN go build -o worker cmd/worker/main.go
-RUN go build -o scheduler cmd/scheduler/main.go
+# Build all binaries
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o scheduler ./cmd/scheduler  
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o worker ./cmd/worker
 
+# Final stage
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates
+# Install ca-certificates and docker client
+RUN apk --no-cache add ca-certificates docker-cli
+
 WORKDIR /root/
 
 # Copy binaries from builder
 COPY --from=builder /app/api .
-COPY --from=builder /app/worker .
 COPY --from=builder /app/scheduler .
+COPY --from=builder /app/worker .
 
-# Make binaries executable
-RUN chmod +x api worker scheduler
-
-# Default command (can be overridden)
+# Default command (can be overridden in docker-compose)
 CMD ["./api"]

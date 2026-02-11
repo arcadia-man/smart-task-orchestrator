@@ -1,60 +1,134 @@
-version: "3.8"
+# Smart Task Orchestrator - Production Ready Deployment
 
 services:
-  mongo:
-    image: mongo:7
-    container_name: orchestrator-mongo
-    restart: always
-    ports:
-      - "27017:27017"
-    environment:
-      MONGO_INITDB_DATABASE: orchestrator
-    volumes:
-      - mongo_data:/data/db
-
+  # Backend Services
   api:
-    build: 
+    build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: orchestrator-api
     ports:
       - "8080:8080"
     environment:
-      MONGO_URI: mongodb://mongo:27017/orchestrator
-      KAFKA_BROKER: host.docker.internal:9092
-      DB_NAME: orchestrator
-      PORT: 8080
+      - MONGO_URI=mongodb://mongodb:27017
+      - DB_NAME=orchestrator
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKER=${KAFKA_BROKER:-kafka:9092}
+      - JWT_SECRET=your-jwt-secret-change-in-production
+      - PORT=8080
     depends_on:
-      - mongo
+      - mongodb
+      - redis
     restart: unless-stopped
-
-  worker:
-    build: 
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: orchestrator-worker
-    command: ./worker
-    environment:
-      MONGO_URI: mongodb://mongo:27017/orchestrator
-      KAFKA_BROKER: host.docker.internal:9092
-      DB_NAME: orchestrator
-    depends_on:
-      - mongo
-    restart: unless-stopped
+    networks:
+      - orchestrator-network
 
   scheduler:
-    build: 
+    build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: orchestrator-scheduler
-    command: ./scheduler
+    command: ["./scheduler"]
     environment:
-      MONGO_URI: mongodb://mongo:27017/orchestrator
-      KAFKA_BROKER: host.docker.internal:9092
-      DB_NAME: orchestrator
+      - MONGO_URI=mongodb://mongodb:27017
+      - DB_NAME=orchestrator
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKER=${KAFKA_BROKER:-kafka:9092}
     depends_on:
-      - mongo
+      - mongodb
+      - redis
     restart: unless-stopped
+    networks:
+      - orchestrator-network
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: orchestrator-worker
+    command: ["./worker"]
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017
+      - DB_NAME=orchestrator
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKER=${KAFKA_BROKER:-kafka:9092}
+    depends_on:
+      - mongodb
+      - redis
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # For Docker-in-Docker
+    restart: unless-stopped
+    networks:
+      - orchestrator-network
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: orchestrator-frontend
+    ports:
+      - "3001:80"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8080
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - orchestrator-network
+
+  # Infrastructure
+  mongodb:
+    image: mongo:7
+    container_name: orchestrator-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    restart: unless-stopped
+    networks:
+      - orchestrator-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: orchestrator-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - orchestrator-network
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: orchestrator-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - orchestrator-network
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: orchestrator-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: true
+    networks:
+      - orchestrator-network
 
 volumes:
-  mongo_data:
+  mongodb_data:
+  redis_data:
+
+networks:
+  orchestrator-network:
+    driver: bridge

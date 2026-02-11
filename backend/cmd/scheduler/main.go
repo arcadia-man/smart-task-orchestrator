@@ -1,105 +1,73 @@
 package main
 
 import (
-	"context"
-	"log"
-	"time"
+    "log"
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
 
-	"smart-task-orchestrator/internal/config"
-	"smart-task-orchestrator/internal/db"
-	"smart-task-orchestrator/internal/jobs"
-	"smart-task-orchestrator/internal/kafka"
-
-	"github.com/robfig/cron/v3"
+    "smart-task-orchestrator/internal/config"
+    "smart-task-orchestrator/internal/db"
+    "smart-task-orchestrator/internal/scheduler"
+    "smart-task-orchestrator/pkg/kafka"
+    "smart-task-orchestrator/pkg/redis"
 )
 
 func main() {
-	cfg := config.Load()
+    log.Println("🚀 Starting Smart Task Orchestrator - Scheduler Service")
 
-	// Initialize MongoDB
-	mongoDB, err := db.NewMongoDB(cfg.MongoURI, cfg.DBName)
-	if err != nil {
-		log.Fatal("Failed to connect to MongoDB:", err)
-	}
-	defer mongoDB.Close()
+    // Load configuration
+    cfg := config.Load()
 
-	// Initialize services
-	jobService := jobs.NewService(mongoDB.Database)
-	producer := kafka.NewProducer(cfg.KafkaBroker)
-	defer producer.Close()
+    // Initialize database
+    mongoDB, err := db.NewMongoDB(cfg.MongoURI, cfg.DBName)
+    if err != nil {
+        log.Fatalf("Failed to connect to MongoDB: %v", err)
+    }
+    defer mongoDB.Close()
 
-	// Initialize cron scheduler
-	c := cron.New()
+    // Initialize Redis with 4 shards
+    redisClient, err := redis.NewClient(cfg.RedisURL, 4)
+    if err != nil {
+        log.Fatalf("Failed to connect to Redis: %v", err)
+    }
+    defer redisClient.Close()
 
-	// Schedule job to run every minute to check for scheduled jobs
-	_, err = c.AddFunc("@every 1m", func() {
-		processScheduledJobs(jobService, producer)
-	})
-	if err != nil {
-		log.Fatal("Failed to add cron job:", err)
-	}
+    // Initialize Kafka producer
+    producer := kafka.NewProducer(cfg.KafkaBroker, "job_executions")
+    defer producer.Close()
 
-	log.Println("⏰ Scheduler started, checking for scheduled jobs every minute...")
-	c.Start()
+    // Initialize services
+    precomputeService := scheduler.NewPrecomputeService(mongoDB.Database, redisClient)
 
-	// Keep the scheduler running
-	select {}
-}
+    // For now, run poller for shard 0 only
+    // In production, you'd run multiple scheduler instances with different shard IDs
+    pollerService := scheduler.NewPollerService(mongoDB.Database, redisClient, producer, 0)
 
-func processScheduledJobs(jobService *jobs.Service, producer *kafka.Producer) {
-	ctx := context.Background()
+    // Start services
+    precomputeService.Start()
+    pollerService.Start()
 
-	log.Println("🔍 Checking for scheduled jobs...")
+    // Wait for shutdown signal
+    sigChan := make(chan os.Signal, 1)
+    signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	scheduledJobs, err := jobService.GetScheduledJobs(ctx)
-	if err != nil {
-		log.Printf("Failed to get scheduled jobs: %v", err)
-		return
-	}
+    log.Println("✅ Scheduler service started")
+    log.Println("🔄 Precompute service: Running every 5 minutes")
+    log.Println("⏰ Poller service: Running every 1 second for shard 0")
+    log.Println("📊 Press Ctrl+C to stop")
 
-	if len(scheduledJobs) == 0 {
-		log.Println("No scheduled jobs found")
-		return
-	}
+    <-sigChan
 
-	log.Printf("Found %d scheduled jobs", len(scheduledJobs))
+    log.Println("🛑 Shutting down scheduler service...")
 
-	for _, job := range scheduledJobs {
-		log.Printf("📤 Publishing scheduled job: %s", job.ID.Hex())
+    // Stop services gracefully
+    precomputeService.Stop()
+    pollerService.Stop()
 
-		// Publish job to Kafka
-		err := producer.PublishJob(ctx, "jobs.execute", job.ID.Hex(), job.Payload)
-		if err != nil {
-			log.Printf("Failed to publish job %s: %v", job.ID.Hex(), err)
-			continue
-		}
+    // Give services time to finish current operations
+    time.Sleep(2 * time.Second)
 
-		// Update job status to queued
-		err = jobService.UpdateJobStatus(ctx, job.ID.Hex(), jobs.StatusQueued, "Job queued by scheduler")
-		if err != nil {
-			log.Printf("Failed to update job status: %v", err)
-		}
-
-		// For cron jobs, schedule next run
-		if job.Type == jobs.TypeCron && job.CronExpr != "" {
-			scheduleNextRun(ctx, jobService, &job)
-		}
-	}
-}
-
-func scheduleNextRun(ctx context.Context, jobService *jobs.Service, job *jobs.Job) {
-	// Parse cron expression and calculate next run time
-	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-	schedule, err := parser.Parse(job.CronExpr)
-	if err != nil {
-		log.Printf("Invalid cron expression for job %s: %v", job.ID.Hex(), err)
-		return
-	}
-
-	nextRun := schedule.Next(time.Now())
-	log.Printf("Next run for job %s scheduled at: %v", job.ID.Hex(), nextRun)
-
-	// For now, we'll just log the next scheduled time
-	// In a production system, you would create a new job instance
-	log.Printf("Next cron job instance for '%s' would be scheduled at: %v", job.Name, nextRun)
+    log.Println("✅ Scheduler service stopped")
 }
