@@ -1,31 +1,27 @@
-FROM golang:1.21-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 
-# Copy go mod files
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy source code
 COPY . .
 
-# Build the application
-RUN go build -o api cmd/api/main.go
-RUN go build -o worker cmd/worker/main.go
-RUN go build -o scheduler cmd/scheduler/main.go
+RUN go build -o api ./cmd/api/main.go
+RUN go build -o worker ./cmd/worker/main.go
+RUN go build -o scheduler ./cmd/scheduler/main.go
 
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates
-WORKDIR /root/
+WORKDIR /app
 
-# Copy binaries from builder
 COPY --from=builder /app/api .
 COPY --from=builder /app/worker .
 COPY --from=builder /app/scheduler .
 
-# Make binaries executable
-RUN chmod +x api worker scheduler
+# Install docker client in alpine to talk to the socket
+RUN apk add --no-cache docker-cli
 
-# Default command (can be overridden)
+EXPOSE 8080
+
 CMD ["./api"]
