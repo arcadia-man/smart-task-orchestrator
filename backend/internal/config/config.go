@@ -1,35 +1,35 @@
 package config
 
 import (
-	"log"
-	"os"
+	"strings"
 
-	"github.com/joho/godotenv"
+	"github.com/spf13/viper"
 )
 
 type Config struct {
-	MongoURI    string
-	KafkaBroker string
-	DBName      string
-	Port        string
+	Port         string `mapstructure:"PORT"`
+	DBUri        string `mapstructure:"DB_URI"`
+	DBName       string `mapstructure:"DB_NAME"`
+	KafkaBrokers string `mapstructure:"KAFKA_BROKERS"`
+	JWTSecret    string `mapstructure:"JWT_SECRET"`
+	Environment  string `mapstructure:"ENVIRONMENT"`
 }
 
-func Load() *Config {
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, using environment variables")
+func LoadConfig() (*Config, error) {
+	viper.SetDefault("PORT", "8080")
+	viper.SetDefault("DB_URI", "mongodb://localhost:27017")
+	viper.SetDefault("DB_NAME", "smart_orchestrator")
+	viper.SetDefault("KAFKA_BROKERS", "localhost:9092")
+	viper.SetDefault("JWT_SECRET", "super-secret-key")
+	viper.SetDefault("ENVIRONMENT", "development")
+
+	viper.AutomaticEnv()
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+
+	var config Config
+	if err := viper.Unmarshal(&config); err != nil {
+		return nil, err
 	}
 
-	return &Config{
-		MongoURI:    getEnv("MONGO_URI", "mongodb://localhost:27017/orchestrator"),
-		KafkaBroker: getEnv("KAFKA_BROKER", "localhost:9092"),
-		DBName:      getEnv("DB_NAME", "orchestrator"),
-		Port:        getEnv("PORT", "8080"),
-	}
-}
-
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
+	return &config, nil
 }
