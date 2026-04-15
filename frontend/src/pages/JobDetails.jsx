@@ -1,117 +1,145 @@
-import React from 'react'
-import { useParams, Link } from 'react-router-dom'
-import { useQuery } from 'react-query'
-import { jobsAPI } from '../api/jobs'
+import React from 'react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useQuery } from 'react-query';
+import { jobsAPI } from '../api/jobs';
+import { FiArrowLeft } from 'react-icons/fi';
+import { motion } from 'framer-motion';
 
-function JobDetails() {
-  const { id } = useParams()
+const STATUS_STYLE = {
+  completed: 'text-green-600 bg-green-50',
+  failed: 'text-red-600 bg-red-50',
+  running: 'text-blue-600 bg-blue-50',
+  pending: 'text-amber-600 bg-amber-50',
+  queued: 'text-slate-600 bg-slate-100',
+};
+
+const JobDetails = () => {
+  const { id } = useParams();
+  const navigate = useNavigate();
   
   const { data: job, isLoading, error } = useQuery(
     ['job', id],
     () => jobsAPI.getJob(id).then(res => res.data),
-    { refetchInterval: 10000 }
-  )
+    { refetchInterval: 10000, retry: 2 }
+  );
 
-  const getStatusColor = (status) => {
-    const colors = {
-      scheduled: 'bg-yellow-100 text-yellow-800',
-      queued: 'bg-blue-100 text-blue-800',
-      running: 'bg-purple-100 text-purple-800',
-      completed: 'bg-green-100 text-green-800',
-      failed: 'bg-red-100 text-red-800'
-    }
-    return colors[status] || 'bg-gray-100 text-gray-800'
-  }
+  if (isLoading) return (
+    <div className="min-h-screen flex items-center justify-center bg-white">
+      <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-200 animate-pulse">Retrieving execution logs...</p>
+    </div>
+  );
 
-  if (isLoading) return <div className="text-center py-8">Loading job details...</div>
-  if (error) return <div className="text-center py-8 text-red-600">Error loading job details</div>
-  if (!job) return <div className="text-center py-8">Job not found</div>
+  if (error || !job) return (
+    <div className="min-h-screen flex flex-col items-center justify-center bg-white">
+      <p className="text-red-500 font-bold mb-6 uppercase tracking-widest text-xs">Job not found or unauthorized</p>
+      <button onClick={() => navigate('/dashboard')} className="bg-black text-white px-8 py-3 text-[10px] font-black uppercase tracking-widest hover:opacity-80">
+        Return to Dashboard
+      </button>
+    </div>
+  );
 
   return (
-    <div className="max-w-4xl mx-auto">
-      <div className="mb-6">
-        <Link to="/" className="text-blue-600 hover:text-blue-800 mb-4 inline-block">
-          ← Back to Dashboard
-        </Link>
-        <h1 className="text-3xl font-bold text-gray-900">{job.name}</h1>
-      </div>
+    <div className="min-h-screen bg-white font-sans text-black py-14 px-8 lg:px-20">
+      <div className="max-w-5xl mx-auto">
+        <button 
+          onClick={() => navigate('/dashboard')}
+          className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-300 hover:text-black transition-colors mb-20"
+        >
+          <FiArrowLeft size={16} /> Back to Dashboard
+        </button>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Job Info */}
-        <div className="bg-white shadow rounded-lg p-6">
-          <h2 className="text-xl font-semibold mb-4">Job Information</h2>
-          <div className="space-y-3">
-            <div>
-              <span className="font-medium text-gray-700">Status:</span>
-              <span className={`ml-2 px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(job.status)}`}>
-                {job.status}
-              </span>
-            </div>
-            <div>
-              <span className="font-medium text-gray-700">Type:</span>
-              <span className="ml-2 text-gray-900">{job.type}</span>
-            </div>
-            <div>
-              <span className="font-medium text-gray-700">Retry Count:</span>
-              <span className="ml-2 text-gray-900">{job.retryCount} / {job.maxRetries}</span>
-            </div>
-            {job.cronExpr && (
-              <div>
-                <span className="font-medium text-gray-700">Cron Expression:</span>
-                <span className="ml-2 text-gray-900 font-mono">{job.cronExpr}</span>
-              </div>
-            )}
-            {job.nextRunAt && (
-              <div>
-                <span className="font-medium text-gray-700">Next Run:</span>
-                <span className="ml-2 text-gray-900">{new Date(job.nextRunAt).toLocaleString()}</span>
-              </div>
-            )}
-            <div>
-              <span className="font-medium text-gray-700">Created:</span>
-              <span className="ml-2 text-gray-900">{new Date(job.createdAt).toLocaleString()}</span>
-            </div>
-            <div>
-              <span className="font-medium text-gray-700">Updated:</span>
-              <span className="ml-2 text-gray-900">{new Date(job.updatedAt).toLocaleString()}</span>
-            </div>
-          </div>
-        </div>
+        {/* Job Header */}
+        <header className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-24 pb-12 border-b border-slate-50">
+           <div>
+              <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-2">Job ID: {job.id}</p>
+              <h1 className="text-4xl lg:text-6xl font-black tracking-tight">{job.name}</h1>
+           </div>
+           <span className={`text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-full border ${STATUS_STYLE[job.status] || STATUS_STYLE.pending}`}>
+              {job.status || 'pending'}
+           </span>
+        </header>
 
-        {/* Payload */}
-        <div className="bg-white shadow rounded-lg p-6">
-          <h2 className="text-xl font-semibold mb-4">Payload</h2>
-          <pre className="bg-gray-100 p-4 rounded text-sm overflow-auto">
-            {JSON.stringify(job.payload, null, 2)}
-          </pre>
-        </div>
-      </div>
+        <div className="grid lg:grid-cols-3 gap-20">
+           {/* Main Info */}
+           <div className="lg:col-span-2 space-y-16">
+              <section>
+                 <h2 className="text-[10px] font-black uppercase tracking-[0.2em] mb-10 pb-4 border-b-2 border-black inline-block">Execution Metadata</h2>
+                 <div className="grid grid-cols-2 gap-10">
+                    <div>
+                       <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-2">Job Type</p>
+                       <p className="font-bold uppercase tracking-wider text-sm">{job.type}</p>
+                    </div>
+                    <div>
+                       <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-2">Docker Image</p>
+                       <p className="font-mono text-sm font-bold">{job.image}</p>
+                    </div>
+                    <div>
+                       <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-2">Command</p>
+                       <p className="font-mono text-xs font-bold bg-slate-50 px-3 py-2 rounded-lg">{job.command}</p>
+                    </div>
+                    {job.cron_expr && (
+                       <div>
+                          <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest mb-2">Cron Schedule</p>
+                          <p className="font-mono text-sm font-bold text-orange-500">{job.cron_expr}</p>
+                       </div>
+                    )}
+                    <div>
+                       <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-2">Created</p>
+                       <p className="font-bold text-sm">{new Date(job.created_at).toLocaleString()}</p>
+                    </div>
+                    <div>
+                       <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-2">Last Updated</p>
+                       <p className="font-bold text-sm">{new Date(job.updated_at).toLocaleString()}</p>
+                    </div>
+                 </div>
+              </section>
 
-      {/* History */}
-      <div className="mt-6 bg-white shadow rounded-lg p-6">
-        <h2 className="text-xl font-semibold mb-4">Execution History</h2>
-        <div className="space-y-3">
-          {job.history?.map((event, index) => (
-            <div key={index} className="border-l-4 border-blue-500 pl-4 py-2">
-              <div className="flex justify-between items-start">
-                <div>
-                  <span className="font-medium text-gray-900">{event.event}</span>
-                  <p className="text-gray-600 text-sm">{event.message}</p>
-                </div>
-                <span className="text-sm text-gray-500">
-                  {new Date(event.timestamp).toLocaleString()}
-                </span>
+              {/* Sandbox Config */}
+              {job.scaling && (
+                 <section>
+                    <h2 className="text-[10px] font-black uppercase tracking-[0.2em] mb-10 pb-4 border-b-2 border-black inline-block">Sandbox Scaling Config</h2>
+                    <div className="grid grid-cols-2 gap-10">
+                       <div>
+                          <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-2">Min Containers</p>
+                          <p className="text-4xl font-black">{job.scaling.min_containers}</p>
+                       </div>
+                       <div>
+                          <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-2">Max Containers</p>
+                          <p className="text-4xl font-black">{job.scaling.max_containers}</p>
+                       </div>
+                    </div>
+                 </section>
+              )}
+           </div>
+
+           {/* Sidebar */}
+           <div className="space-y-10">
+              <div className="border border-slate-50 rounded-2xl p-8 bg-slate-50/30">
+                 <h3 className="text-[10px] font-black uppercase tracking-[0.2em] mb-8 text-slate-400">Quick Actions</h3>
+                 <div className="space-y-4">
+                    <button className="w-full py-4 bg-black text-white text-[10px] font-black uppercase tracking-widest hover:opacity-80 transition-all rounded-xl">
+                       Trigger Manually
+                    </button>
+                    <button 
+                       onClick={() => navigate('/create')}
+                       className="w-full py-4 border border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-black hover:border-black transition-all rounded-xl"
+                    >
+                       Clone Config
+                    </button>
+                 </div>
               </div>
-            </div>
-          ))}
-          
-          {(!job.history || job.history.length === 0) && (
-            <p className="text-gray-500 text-center py-4">No history available</p>
-          )}
+
+              <div className="border border-dashed border-slate-100 rounded-2xl p-8">
+                 <h3 className="text-[10px] font-black uppercase tracking-[0.2em] mb-4 text-slate-300">Kafka Metadata</h3>
+                 <p className="text-[10px] font-bold text-slate-300 leading-relaxed">
+                    Events for this job are dispatched via topic <span className="font-mono text-black">jobs.execute</span> on the cluster broker.
+                 </p>
+              </div>
+           </div>
         </div>
       </div>
     </div>
-  )
-}
+  );
+};
 
-export default JobDetails
+export default JobDetails;
